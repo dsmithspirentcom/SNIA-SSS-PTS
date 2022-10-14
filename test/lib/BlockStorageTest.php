@@ -1704,10 +1704,10 @@ abstract class BlockStorageTest {
   public static function getRunOptions() {
       GetParaInfo();
       
-      $report_folder = $GLOBALS[para][report];
-      $run = $GLOBALS[para][run];
-      $file_tmp = $GLOBALS[para][tmp];
-      $log = $GLOBALS[para][log];
+      $report_folder = $GLOBALS["para"]["report"];
+      $run = $GLOBALS["para"]["run"];
+      $file_tmp = $GLOBALS["para"]["tmp"];
+      $log = $GLOBALS["para"]["log"];
       
       // default run argument values
       $sysInfo = get_sys_info($report_folder);
