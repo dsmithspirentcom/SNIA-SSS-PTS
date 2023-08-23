@@ -8,6 +8,6 @@ echo "Device '$DEV_UNDER_TEST' must be secure erased manually! See https://grok.
 read -p "Press [Enter] to confirm this has been done, or Ctrl-C to exit"
 
 cd $(pwd)/lib
-sudo php run.php --verbose --target=$DEV_UNDER_TEST --test=iops --spec=$SPEC --no-secureerase --notrim --nozerofill
+sudo php run.php --verbose --target=$DEV_UNDER_TEST --test=iops --spec=$SPEC --nopurge
 
 # End of script
