@@ -124,8 +124,6 @@ def run_test(ctx):
     ]
 
     # --threads_per_core_max=1
-    # --threads_per_target_max=24
-    # --threads=24
     # --timeout=(2 * 86400)
 
     # Get devices to be tested
