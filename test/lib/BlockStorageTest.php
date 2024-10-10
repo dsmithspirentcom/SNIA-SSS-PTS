@@ -29,7 +29,7 @@ ini_set('display_errors','on');     # 開啟錯誤輸出
 error_reporting(E_ERROR | E_PARSE);  # 設定輸出錯誤類型
 
 $block_storage_test_start_time = time();
-date_default_timezone_set("Asia/Taipei");//('UTC');
+date_default_timezone_set("UTC");
 
 function GetParaInfo()
 {
