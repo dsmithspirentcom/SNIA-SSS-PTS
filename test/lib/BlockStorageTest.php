@@ -2228,16 +2228,29 @@ abstract class BlockStorageTest {
         else print_msg(sprintf('ATA secure erase not be attempted for %s because %s', $target, $nosecureerase ? '--nosecureerase argument was specified (or implied due to lack of --secureerase_pswd argument)' : 'it is not a device'), $this->verbose, __FILE__, __LINE__);
 
         // NVME format namespace
-        if(!$purged && $nvmeformat){
+        if(!$purged && $nvmeformat) {
           print_msg(sprintf('Attempting nvme format namespace for target %s', $target), $this->verbose, __FILE__, __LINE__);
-          $res = shell_exec(sprintf("nvme format %s",$target));
-          if(preg_match("/^Success/", $res)){
+          // NOTE: Changed as per https://www.ibm.com/docs/en/linux-on-systems?topic=devices-secure-data-deletion-nvme-drive
+          // Check drive support for crypto-erase operation
+          $res = shell_exec(sprintf('nvme id-ctrl %s | grep fna', $target));
+          if(preg_match("/^fna *: *0x4/", $res)) {
+            print_msg('Device supports crypto-erase operation ', $this->verbose, __FILE__, __LINE__);
+            $ses = 2;
+          } else {
+            print_msg('Device does NOT support crypto-erase operation ', $this->verbose, __FILE__, __LINE__);
+            $ses = 1;
+          }
+          $target_ctrl_dev = substr($target, 0, -2);
+          $cmd = sprintf('nvme format %s -n 0xffffffff -s=%u ', $target_ctrl_dev, $ses);
+          print_msg(sprintf('nvme format command: %s', $cmd), $this->verbose, __FILE__, __LINE__);
+          $res = shell_exec($cmd);
+          if(preg_match("/^Success formatting namespace/", $res)) {
             print_msg(sprintf('nvme format namespace successful for target %s ', $target), $this->verbose, __FILE__, __LINE__);
             $this->purgeMethods[$target] = 'formatnamespace';
             $purged = TRUE;            
-          }            
-          else
-            print_msg(sprintf('nvme format namespace fail for target %s ', $target), $this->verbose, __FILE__, __LINE__);
+          }
+        } else {
+          print_msg(sprintf('nvme format namespace fail for target %s ', $target), $this->verbose, __FILE__, __LINE__);
         }
 
         // next try TRIM
