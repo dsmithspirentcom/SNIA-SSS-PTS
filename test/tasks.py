@@ -16,9 +16,11 @@
 import logging
 import os
 import sys
+import traceback
 
 from invoke import task
 from pathlib import Path
+from typing import List
 
 ###############################################################################
 # GLOBAL CONSTANTS
@@ -28,6 +30,10 @@ SCRIPT_VERSION = "0.1"
 
 SCRIPT_PATH = Path(__file__).resolve()
 SCRIPT_DIR = SCRIPT_PATH.parent
+
+drive_models = {
+    "micron_7450_pro_u3": "MTFDKCC15T3TFR",
+}
 
 ###############################################################################
 # GLOBAL VARIABLES
@@ -76,6 +82,72 @@ def configure_root_logger(debug=False) -> logging.Logger:
     return logger
 
 
+def get_drives_by_ident(ctx, model: str) -> List[Path]:
+    """
+    Returns list of drive block device paths, for devices matching supplied
+    model ident
+    """
+    # Get devices matching ident
+    result = ctx.run(f"nvme list | grep {model}", hide=True)
+    # Build list of associated block devices
+    block_devs = []
+    for line in str(result.stdout).split('\n'):
+        line = line.strip()
+        if len(line) > 0:
+            block_dev = line.split()[0]
+            block_devs.append(Path(block_dev))
+    block_devs.sort()
+
+    return block_devs
+
+
+def block_device_to_char(dev_path: Path):
+    """
+    Get character device path from drive's block path
+    """
+    path_str = str(dev_path)
+    if path_str[-2] == 'n':
+        # Path is that of a block device, so convert to character
+        return Path(path_str[:-2])
+    else:
+        # Path is already a character device
+        return dev_path
+
+
+def format_drive(ctx, drive_path: Path):
+    """
+    Formats drive at supplied path
+    """
+
+    # NOTE: Assuming NVMe, method from https://www.ibm.com/docs/en/linux-on-systems?topic=devices-secure-data-deletion-nvme-drive
+
+    logger.debug(f"Attempting nvme format namespace for target {drive_path}")
+    # Check drive support for crypto-erase operation
+    # This erase is performed for good measure, as it places minimal wear on
+    # the disk
+    result = ctx.run(
+        f"nvme id-ctrl {drive_path} | grep fna",
+        hide=True,
+        warn=True
+    )
+    if result.stdout.split()[-1] == "0x4":
+        logger.debug("Device supports crypto-erase operation")
+        erase_mode = 2
+    else:
+        logger.debug("Device does NOT support crypto-erase operation")
+        erase_mode = 1
+    # Perform the erase
+    result = ctx.run(
+        f"nvme format {block_device_to_char(drive_path)} "
+        f"-n 0xffffffff -s={erase_mode}"
+    )
+    if "Success formatting namespace" in result.stdout:
+        logger.debug(
+            f"nvme format namespace successful for target {drive_path}")
+    else:
+        raise Exception(f"Failed to format drive {drive_path}")
+
+
 ###############################################################################
 # TASKS
 ###############################################################################
@@ -89,7 +161,7 @@ def initialise(ctx):
 
     global logger
 
-    logger = configure_root_logger()
+    logger = configure_root_logger(debug=True)
 
     try:
         # Check we are running as root
@@ -109,12 +181,34 @@ def install_prerequisites(ctx):
 
 
 @task(pre=[initialise])
+def setup_raid(ctx):
+    """
+    ???
+    """
+
+    try:
+        # Get lists of drives to be included in pool
+        drives = get_drives_by_ident(ctx, drive_models["micron_7450_pro_u3"])
+        logger.debug(f"drives={drives}")
+        logger.debug(f"len(drives)={len(drives)}")
+        # Format each drive
+        # TODO: Show progress in form of current drive vs. total drives
+        #       e.g. 'Formatting drive 1/24 (/dev/nvme0n1)
+        for drive in drives:
+            logger.info(f"Formatting {drive}")
+            format_drive(ctx, drive)
+    except Exception as ex:
+        logger.critical(str(ex))
+        logger.debug(f"\n{traceback.format_exc()}")
+        sys.exit(1)
+
+
+@task(pre=[initialise])
 def run_test(ctx):
     """
     ???
     """
 
-    DEVICE_IDENT = "MTFDKCC15T3TFR"
     SPEC = "enterprise"
     NUM_TO_TEST = 2
     TESTS = [
@@ -126,15 +220,7 @@ def run_test(ctx):
     # --threads_per_core_max=1
     # --timeout=(2 * 86400)
 
-    # Get devices to be tested
-    logger.info("Getting devices under test...")
-    result = ctx.run(f"nvme list | grep {DEVICE_IDENT}", hide=True)
-    block_devs = []
-    for line in str(result.stdout).split('\n'):
-        line = line.strip()
-        block_dev = line.split()[0]
-        block_devs.append(block_dev)
-    block_devs.sort()
+    block_devs = get_drives_by_ident(ctx, drive_models["micron_7450_pro_u3"])
 
     for i in range(0, NUM_TO_TEST):
         block_dev = block_devs[i]
