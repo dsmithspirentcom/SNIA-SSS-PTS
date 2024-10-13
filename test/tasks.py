@@ -19,8 +19,8 @@ import sys
 import traceback
 
 from invoke import task
-from pathlib import Path
 from typing import List
+from natsort import natsorted
 
 ###############################################################################
 # GLOBAL CONSTANTS
@@ -28,8 +28,10 @@ from typing import List
 
 SCRIPT_VERSION = "0.1"
 
+'''
 SCRIPT_PATH = Path(__file__).resolve()
 SCRIPT_DIR = SCRIPT_PATH.parent
+'''
 
 drive_models = {
     "micron_7450_pro_u3": "MTFDKCC15T3TFR",
@@ -82,7 +84,7 @@ def configure_root_logger(debug=False) -> logging.Logger:
     return logger
 
 
-def get_drives_by_ident(ctx, model: str) -> List[Path]:
+def get_drives_by_ident(ctx, model: str) -> List[str]:
     """
     Returns list of drive block device paths, for devices matching supplied
     model ident
@@ -95,56 +97,59 @@ def get_drives_by_ident(ctx, model: str) -> List[Path]:
         line = line.strip()
         if len(line) > 0:
             block_dev = line.split()[0]
-            block_devs.append(Path(block_dev))
-    block_devs.sort()
+            block_devs.append(block_dev)
 
-    return block_devs
+    return natsorted(block_devs)
 
 
-def block_device_to_char(dev_path: Path):
+def block_device_to_char(dev_path: str) -> str:
     """
     Get character device path from drive's block path
     """
-    path_str = str(dev_path)
-    if path_str[-2] == 'n':
+    if dev_path[-2] == 'n':
         # Path is that of a block device, so convert to character
-        return Path(path_str[:-2])
+        return dev_path[:-2]
     else:
         # Path is already a character device
         return dev_path
 
 
-def format_drive(ctx, drive_path: Path):
+def format_drive(ctx, drive_path: str, secure=False):
     """
     Formats drive at supplied path
     """
 
-    # NOTE: Assuming NVMe, method from https://www.ibm.com/docs/en/linux-on-systems?topic=devices-secure-data-deletion-nvme-drive
-
-    logger.debug(f"Attempting nvme format namespace for target {drive_path}")
-    # Check drive support for crypto-erase operation
-    # This erase is performed for good measure, as it places minimal wear on
-    # the disk
-    result = ctx.run(
-        f"nvme id-ctrl {drive_path} | grep fna",
-        hide=True,
-        warn=True
-    )
-    if result.stdout.split()[-1] == "0x4":
-        logger.debug("Device supports crypto-erase operation")
-        erase_mode = 2
-    else:
-        logger.debug("Device does NOT support crypto-erase operation")
-        erase_mode = 1
-    # Perform the erase
-    result = ctx.run(
+    # Erase all namespaces without warning
+    cmd = (
         f"nvme format {block_device_to_char(drive_path)} "
-        f"-n 0xffffffff -s={erase_mode}"
+        "-n 0xffffffff --force"
     )
-    if "Success formatting namespace" in result.stdout:
-        logger.debug(
-            f"nvme format namespace successful for target {drive_path}")
-    else:
+
+    # Append arguments for crypto erase, if requested
+    if secure:
+        # NOTE: Method from https://www.ibm.com/docs/en/linux-on-systems?topic=devices-secure-data-deletion-nvme-drive
+        # Check drive support for crypto-erase operation
+        result = ctx.run(
+            f"nvme id-ctrl {drive_path} | grep fna",
+            hide=True,
+            warn=True
+        )
+        if result.stdout.split()[-1] == "0x4":
+            logger.debug("Device supports crypto erase")
+            erase_mode = 2
+        else:
+            logger.debug(
+                "Device does NOT support crypto erase, "
+                "falling back to user data erase"
+            )
+            erase_mode = 1
+        cmd += f" -s={erase_mode}"
+
+    logger.debug(f"cmd='{cmd}'")
+
+    # Perform the erase
+    result = ctx.run(cmd, hide=True)
+    if "Success formatting namespace" not in result.stdout:
         raise Exception(f"Failed to format drive {drive_path}")
 
 
@@ -192,10 +197,9 @@ def setup_raid(ctx):
         logger.debug(f"drives={drives}")
         logger.debug(f"len(drives)={len(drives)}")
         # Format each drive
-        # TODO: Show progress in form of current drive vs. total drives
-        #       e.g. 'Formatting drive 1/24 (/dev/nvme0n1)
-        for drive in drives:
-            logger.info(f"Formatting {drive}")
+        for i in range(0, len(drives)):
+            drive = drives[i]
+            logger.info(f"Formatting {drive} ({i+1}/{len(drives)}) ...")
             format_drive(ctx, drive)
     except Exception as ex:
         logger.critical(str(ex))
