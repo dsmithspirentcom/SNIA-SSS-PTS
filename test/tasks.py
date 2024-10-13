@@ -114,6 +114,14 @@ def block_device_to_char(dev_path: str) -> str:
         return dev_path
 
 
+def drive_mounted(ctx, drive_path: str) -> bool:
+    """
+    Returns True if supplied drive is mounted
+    """
+    result = ctx.run(f"mount | grep {drive_path}", hide=True, warn=True)
+    return (result.exited == 0)
+
+
 def format_drive(ctx, drive_path: str, secure=False):
     """
     Formats drive at supplied path
@@ -196,6 +204,10 @@ def setup_raid(ctx):
         drives = get_drives_by_ident(ctx, drive_models["micron_7450_pro_u3"])
         logger.debug(f"drives={drives}")
         logger.debug(f"len(drives)={len(drives)}")
+        # Ensure none of the drives are mounted
+        for drive in drives:
+            if drive_mounted(ctx, drive):
+                raise Exception(f"Drive {drive} is mounted - unable to format")
         # Format each drive
         for i in range(0, len(drives)):
             drive = drives[i]
